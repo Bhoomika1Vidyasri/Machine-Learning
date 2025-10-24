@@ -1,7 +1,7 @@
-# ✅ Install packages (run once)
+#Install packages (run once)
 !pip install shap optuna openpyxl scikit-fuzzy xgboost lightgbm
 
-# ✅ Import Libraries
+#Import Libraries
 import pandas as pd
 import numpy as np
 from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
@@ -19,21 +19,21 @@ from scipy.stats import f_oneway, kruskal, spearmanr
 from google.colab import files
 import skfuzzy as fuzz
 
-# ✅ Upload Data
+#Upload Data
 uploaded = files.upload()
 df = pd.read_excel("Altered google form data (2).xlsx", sheet_name="Form responses 1")
 
-# ✅ Drop Metadata
+#Drop Metadata
 metadata = ['Timestamp', 'Email address', 'Name of the respondent:', 'Gender',
             'Year of professional experience of respondent:', 'Type of respondent:']
 stakeholder_col = 'Type of respondent:'
 df_meta = df[metadata] if stakeholder_col in df.columns else pd.DataFrame()
 df = df.drop(columns=[col for col in metadata if col in df.columns])
 
-# ✅ Clean Likert responses
+#Clean Likert responses
 df = df.apply(pd.to_numeric, errors='coerce').dropna()
 
-# ✅ Simulated Score and Rating
+#Simulated Score and Rating
 max_total_score = df.shape[1] * 5
 df['Total Score'] = df.sum(axis=1)
 df['Percent Score'] = (df['Total Score'] / max_total_score) * 100
@@ -52,11 +52,11 @@ def assign_rating(score):
 
 df['Simulated Rating'] = df['Percent Score'].apply(assign_rating)
 
-# ✅ Features and Target
+#Features and Target
 X = df.drop(columns=['Total Score', 'Percent Score', 'Simulated Rating'])
 y = df['Percent Score']
 
-# ✅ Define IGBC/GRIHA-aligned Categories
+#Define IGBC/GRIHA-aligned Categories
 categories = {
     'Energy Efficiency': [col for col in X.columns if 'energy' in col.lower()],
     'Water Efficiency': [col for col in X.columns if 'water' in col.lower()],
@@ -65,10 +65,10 @@ categories = {
     'Cost': [col for col in X.columns if 'cost' in col.lower()],
 }
 
-# ✅ Train-Test Split
+#Train-Test Split
 X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-# ✅ Comparative Model Evaluation
+#Comparative Model Evaluation
 models = {
     "Random Forest": RandomForestRegressor(n_estimators=100, random_state=42),
     "XGBoost": XGBRegressor(n_estimators=100, random_state=42),
@@ -93,14 +93,14 @@ results_df = pd.DataFrame(model_results).T
 results_df.to_excel("model_comparison.xlsx")
 files.download("model_comparison.xlsx")
 
-# ✅ Use best performing model
+#Use best performing model
 model = RandomForestRegressor(n_estimators=100, random_state=42)
 model.fit(X_train, y_train)
 y_pred = model.predict(X_test)
 print("Selected Model - R2:", r2_score(y_test, y_pred))
 print("Selected Model - RMSE:", np.sqrt(mean_squared_error(y_test, y_pred)))
 
-# ✅ SHAP Explainability
+#SHAP Explainability
 explainer = shap.Explainer(model, X_train)
 shap_values = explainer(X_train)
 shap.summary_plot(shap_values, X_train, show=False)
@@ -108,7 +108,7 @@ plt.savefig("shap_summary_plot.png", bbox_inches="tight")
 plt.close()
 files.download("shap_summary_plot.png")
 
-# ✅ Bootstrap-based Prediction Intervals
+#Bootstrap-based Prediction Intervals
 bootstrap_preds = []
 for _ in range(100):
     X_s, y_s = resample(X_train, y_train)
@@ -130,7 +130,7 @@ plt.savefig("prediction_uncertainty.png", bbox_inches='tight')
 plt.close()
 files.download("prediction_uncertainty.png")
 
-# ✅ Fuzzy Logic for Likert Scale
+#Fuzzy Logic for Likert Scale
 x_qual = np.arange(0, 6, 1)
 low = fuzz.trimf(x_qual, [0, 1, 3])
 med = fuzz.trimf(x_qual, [2, 3, 4])
@@ -146,12 +146,12 @@ plt.savefig("fuzzy_membership.png", bbox_inches='tight')
 plt.close()
 files.download("fuzzy_membership.png")
 
-# ✅ Multi-objective Optimization
+#Multi-objective Optimization
 result_multi = minimize(lambda x: -model.predict(pd.DataFrame([x], columns=X.columns))[0],
                         x0=[3]*X.shape[1], bounds=Bounds([1]*X.shape[1], [5]*X.shape[1]))
 optimal_vals = result_multi.x
 
-# ✅ Additional Statistical Testing: Kruskal-Wallis, ANOVA, and Spearman Correlation
+#Additional Statistical Testing: Kruskal-Wallis, ANOVA, and Spearman Correlation
 if not df_meta.empty:
     for category, features in categories.items():
         valid_features = [f for f in features if f in df.columns]
@@ -170,15 +170,15 @@ if not df_meta.empty:
             f_val, p_val = f_oneway(*data_by_group)
             print(f"ANOVA for {feat}: F = {f_val:.2f}, p = {p_val:.4f}")
 
-# ✅ Spearman Correlation between RII and SHAP Rankings
+#Spearman Correlation between RII and SHAP Rankings
 rii_scores = X.mean() / 5
 rii_rank = rii_scores.rank()
 mean_shap_values = np.abs(shap_values.values).mean(axis=0)
 shap_rank = pd.Series(mean_shap_values, index=X.columns).rank()
 corr, _ = spearmanr(rii_rank, shap_rank)
-print(f"📊 Spearman Correlation between RII and SHAP Rankings: {corr:.2f}")
+print(f" Spearman Correlation between RII and SHAP Rankings: {corr:.2f}")
 
-# ✅ High-Quality Visuals
+#High-Quality Visuals
 plt.figure(figsize=(10, 6))
 results_df[['R2 Mean', 'RMSE Mean']].plot(kind='bar')
 plt.title("Model Comparison: R2 and RMSE")
