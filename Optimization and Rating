@@ -1,0 +1,131 @@
+#Install packages (run once)
+!pip install shap optuna openpyxl scikit-fuzzy xgboost lightgbm pymoo
+
+#Import Libraries
+import pandas as pd
+import numpy as np
+from sklearn.ensemble import RandomForestRegressor, GradientBoostingRegressor
+from sklearn.linear_model import LinearRegression
+from xgboost import XGBRegressor
+from lightgbm import LGBMRegressor
+from sklearn.model_selection import train_test_split, cross_val_score, KFold
+from sklearn.metrics import r2_score, mean_squared_error
+import shap
+import matplotlib.pyplot as plt
+from scipy.optimize import minimize, Bounds
+from sklearn.utils import resample
+import optuna
+from scipy.stats import f_oneway, kruskal, spearmanr
+from google.colab import files
+import skfuzzy as fuzz
+from sklearn.inspection import permutation_importance
+from pymoo.core.problem import ElementwiseProblem
+from pymoo.optimize import minimize as pymoo_minimize
+from pymoo.algorithms.moo.nsga2 import NSGA2
+from pymoo.termination import get_termination
+
+#Upload Data
+uploaded = files.upload()
+df = pd.read_excel("Altered google form data (2).xlsx", sheet_name="Form responses 1")
+
+#Drop Metadata
+metadata = ['Timestamp', 'Email address', 'Name of the respondent:', 'Gender',
+            'Year of professional experience of respondent:', 'Type of respondent:']
+stakeholder_col = 'Type of respondent:'
+df_meta = df[metadata] if stakeholder_col in df.columns else pd.DataFrame()
+df = df.drop(columns=[col for col in metadata if col in df.columns])
+
+#Sanitize Feature Names (for XGBoost, LightGBM)
+df.columns = [str(col).replace('[', '').replace(']', '').replace('<', '').replace('>', '').replace('\n', ' ').strip() for col in df.columns]
+
+#Clean Likert responses
+df = df.apply(pd.to_numeric, errors='coerce').dropna()
+
+#Simulated Score and Rating
+max_total_score = df.shape[1] * 5
+df['Total Score'] = df.sum(axis=1)
+df['Percent Score'] = (df['Total Score'] / max_total_score) * 100
+
+def assign_rating(score):
+    if score >= 85:
+        return 'Platinum'
+    elif score >= 75:
+        return 'Gold'
+    elif score >= 65:
+        return 'Silver'
+    elif score >= 50:
+        return 'Certified'
+    else:
+        return 'Below Certified'
+
+df['Simulated Rating'] = df['Percent Score'].apply(assign_rating)
+
+#Features and Target
+X = df.drop(columns=['Total Score', 'Percent Score', 'Simulated Rating'])
+y = df['Percent Score']
+X.columns = [str(col) for col in X.columns]  # Fix feature name issues for XGBoost and LightGBM
+
+#Define IGBC/GRIHA-aligned Categories
+categories = {
+    'Energy Efficiency': [col for col in X.columns if 'energy' in col.lower()],
+    'Water Efficiency': [col for col in X.columns if 'water' in col.lower()],
+    'Indoor Air Quality': [col for col in X.columns if 'air quality' in col.lower() or 'indoor' in col.lower()],
+    'Materials & Resources': [col for col in X.columns if 'material' in col.lower()],
+    'Cost': [col for col in X.columns if 'cost' in col.lower()],
+}
+
+#Fit model for optimization reference
+model = RandomForestRegressor(n_estimators=100, random_state=42)
+model.fit(X, y)
+
+#SHAP Summary Plot
+explainer = shap.Explainer(model, X)
+shap_values = explainer(X)
+shap.summary_plot(shap_values, X, show=False)
+plt.tight_layout()
+plt.savefig("shap_summary_plot.png", bbox_inches='tight')
+plt.close()
+files.download("shap_summary_plot.png")
+
+#Model Comparison
+models = {
+    "Random Forest": RandomForestRegressor(),
+    "XGBoost": XGBRegressor(),
+    "LightGBM": LGBMRegressor(),
+    "Linear Regression": LinearRegression(),
+    "Gradient Boosting": GradientBoostingRegressor()
+}
+
+kf = KFold(n_splits=5, shuffle=True, random_state=42)
+model_scores = []
+
+for name, mdl in models.items():
+    try:
+        X_fixed = X.copy()
+        X_fixed.columns = [str(c).replace('[', '').replace(']', '').replace('<', '').replace('>', '') for c in X_fixed.columns]
+        r2 = cross_val_score(mdl, X_fixed, y, cv=kf, scoring='r2')
+        rmse = np.sqrt(-cross_val_score(mdl, X_fixed, y, cv=kf, scoring='neg_mean_squared_error'))
+        model_scores.append({"Model": name, "Mean R2": r2.mean(), "Mean RMSE": rmse.mean()})
+    except ValueError as e:
+        print(f"Model {name} failed due to: {e}")
+
+pd.DataFrame(model_scores).to_csv("model_performance.csv", index=False)
+files.download("model_performance.csv")
+
+#Statistical Tests
+if not df_meta.empty:
+    factor = X.columns[0]
+    groups = df_meta[stakeholder_col].unique()
+    group_sizes = df_meta[stakeholder_col].value_counts()
+    print("Group Sizes for ANOVA:", group_sizes.to_dict())
+
+    if all(group_sizes.get(g, 0) >= 3 for g in groups) and len(groups) >= 2:
+        data_by_group = [df.loc[df_meta[stakeholder_col] == g, factor] for g in groups]
+        f_stat, p_val_anova = f_oneway(*data_by_group)
+        k_stat, p_val_kruskal = kruskal(*data_by_group)
+        shap_rank = pd.Series(np.abs(shap_values.values).mean(axis=0), index=X.columns).rank()
+        rii_rank = X.mean() / 5
+        spearman_corr, _ = spearmanr(rii_rank, shap_rank)
+        print(f"ANOVA p = {p_val_anova:.4f}, Kruskal-Wallis p = {p_val_kruskal:.4f}, Spearman Corr = {spearman_corr:.2f}")
+    else:
+        print("Not enough data for valid ANOVA/Kruskal test.")
